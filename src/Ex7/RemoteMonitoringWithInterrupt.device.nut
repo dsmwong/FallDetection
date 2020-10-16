@@ -23,6 +23,8 @@
 // HAL's are tables that map human readable names to
 // the hardware objects used in the application.
 
+// Copy and Paste Your HAL here
+// YOUR_HAL <- {...}
 @include "ExplorerKit_001.HAL.nut"
 
 // REMOTE MONITORING INTERRUPT APPLICATION CODE
@@ -35,22 +37,23 @@ class Application {
     // Time in seconds to wait between readings
     static READING_INTERVAL_SEC = 30;
     // Time in seconds to wait between connections
-    static REPORTING_INTERVAL_SEC = 120;
+    static REPORTING_INTERVAL_SEC = 300;
     // Max number of stored readings
     static MAX_NUM_STORED_READINGS = 20;
-
-    // Max Timer to guard against bug
-    static MAX_TIMER = 60 * 60 * 12
-
     // Time to wait after boot before first disconection
     // This allows time for blinkup recovery on cold boots
     static BOOT_TIMER_SEC = 60;
     // Accelerometer data rate in Hz
     static ACCEL_DATARATE = 25;
 
-    static FREEFALL_THRESHOLD = 0.7
+    // Power Saving Mode
+    static POWER_SAVE_MODE = true;
 
     // Hardware variables
+    // i2c             = null; // Replace with your sensori2c
+    // tempHumidAddr   = null; // Replace with your tempHumid i2c addr
+    // accelAddr       = null; // Replace with your accel i2c addr
+    // wakePin         = null; // Replace with your wake pin
     i2c             = ExplorerKit_001.SENSOR_AND_GROVE_I2C; // Replace with your sensori2c
     tempHumidAddr   = ExplorerKit_001.TEMP_HUMID_I2C_ADDR; // Replace with your tempHumid i2c addr
     accelAddr       = ExplorerKit_001.ACCEL_I2C_ADDR; // Replace with your accel i2c addr
@@ -65,7 +68,6 @@ class Application {
 
     // Flag to track first disconnection
     _boot = false;
-    _debug = true;
 
     // Flag to track if imp is trying to connect
     _connecting = false;
@@ -79,7 +81,7 @@ class Application {
         // recommended for imp004m, so don't set for those types of imps.
         local type = imp.info().type;
         if (!(type == "imp004m" || type == "impC001")) {
-            imp.setpowersave(false);
+            imp.setpowersave(POWER_SAVE_MODE);
         }
 
         // Change default connection policy, so our application
@@ -104,44 +106,28 @@ class Application {
         checkWakeReason();
     }
 
-    function printStatus() {
-
-    }
-
-    function debugLog(msg) {
-        if( _debug && server.isconnected()) { 
-            server.log(msg) 
-        };
-        
-    }
-
     function checkWakeReason() {
         // We can configure different behavior based on
         // the reason the hardware rebooted.
-
-        debugLog("Woke up because of Reason: " + hardware.wakereason());
         switch (hardware.wakereason()) {
             case WAKEREASON_TIMER :
                 // We woke up after sleep timer expired.
                 restoreNV(); 
-                debugLog("Timer Wake");
                 break;
             case WAKEREASON_PIN :
                 // We woke up because an interrupt pin was triggered.
                 restoreNV(); 
                 // Let's check our interrupt
                 checkInterrupt();
-                debugLog("Pin Wake");
                 break;
             case WAKEREASON_SNOOZE :
                 // We woke up after connection timeout.
                 restoreNV(); 
-                debugLog("Snooze Wake");
                 break;
             default :
                 // We pushed new code or just rebooted the device, etc. Lets
                 // congigure everything.
-                server.log("Device running... Reason: " + hardware.wakereason());
+                server.log("Device running...");
 
                 // NV can persist data when the device goes into sleep mode
                 // Set up the table with defaults - note this method will
@@ -154,10 +140,8 @@ class Application {
                 // immediately disconnect after boot
                 // Set up first disconnect
                 _boot = true;
-                debugLog("Wake in " + BOOT_TIMER_SEC + " seconds")
                 imp.wakeup(BOOT_TIMER_SEC, function() {
                     _boot = false;
-                    debugLog("Boot Powering down after " + BOOT_TIMER_SEC);
                     powerDown();
                 }.bindenv(this));
         }
@@ -229,8 +213,6 @@ class Application {
                 // Update the next connection time varaible
                 setNextConnectTime(now);
 
-                debugLog("Connected=" + connected + " or Time to Connect");
-
                 if (connected) {
                     sendData();
                 } else {
@@ -239,7 +221,6 @@ class Application {
 
                     // We changed the default connection policy, so we need to
                     // use this method to connect
-                    debugLog("Attempt Connection");
                     server.connect(function(reason) {
                         // Connect handler called, we are no longer tring to
                         // connect, so set connecting flag to false
@@ -259,14 +240,12 @@ class Application {
                 // Not time to connect & we are not currently
                 // trying to send data, so let's sleep until
                 // next reading time
-                debugLog("Not connected -  Power Down");
                 powerDown();
             }
         } else {
             // Calculate how long before next reading time
             local timer = status.nextReadTime - now;
             // Schedule next reading
-            debugLog("Wake me in " + timer);
             imp.wakeup(timer, takeReadings.bindenv(this));
         }
 
@@ -305,7 +284,6 @@ class Application {
         status.numFailedConnects <- 0;
 
         // Disconnect from server
-        debugLog("Reading Ack - Power Down");
         powerDown();
     }
 
@@ -331,20 +309,14 @@ class Application {
         local timer = status.nextReadTime - time();
         local type = imp.info().type;
 
-        // if( timer > MAX_TIMER ) { timer = READING_INTERVAL_SEC };
-
-        debugLog("Power down _boot=" + _boot + " timer=" + timer);
-
         // Check that we did not just boot up, are
         // not about to take a reading, and have an 'nv' table
         if (!_boot && timer > 2) {
-            if (!(type == "imp004m" || type == "imp006") && timer < MAX_TIMER ) { // We have nv, so deep sleep
+            if (!(type == "imp004m" || type == "imp006")) { // We have nv, so deep sleep
                 imp.onidle(function() {
-                    debugLog("[" + type + "] idle sleep " + timer);
                     server.sleepfor(timer);
                 }.bindenv(this));
             } else { // No nv table, so just disconnect and sleep
-                debugLog("No NV table " + timer);
                 setWakeup(timer);
                 imp.onidle(function() {
                     server.disconnect();
@@ -352,11 +324,6 @@ class Application {
             }
        } else {
             // Schedule next reading, but don't go to sleep
-            debugLog("Schedule next wake for " + timer);
-            if( timer > MAX_TIMER ) { 
-                timer = READING_INTERVAL_SEC 
-                debugLog("Resetting next wake for " + timer)
-            }
             setWakeup(timer);
         }
     }
@@ -417,8 +384,7 @@ class Application {
 
         // Update the number of failed connections
         status.numFailedConnects <- failed++;
-        
-        debugLog("Fail handle - Power Down");
+
         powerDown();
     }
 
@@ -498,14 +464,11 @@ class Application {
 
     function configureInterrupt() {
         accel.configureInterruptLatching(true);
-        // exceed 1.5G for 1/5 of a second
-        accel.configureFreeFallInterrupt(true, FREEFALL_THRESHOLD);
+        accel.configureFreeFallInterrupt(true);
 
         // Configure wake pin
         wakePin.configure(DIGITAL_IN_WAKEUP, function() {
-            debugLog("Woke Up by pin");
             if (wakePin.read() && checkInterrupt()) {
-                debugLog("Power Up and Read");
                 powerUpSensors();
                 takeReadings();
             }

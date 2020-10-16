@@ -1,18 +1,17 @@
-// Remote Monitoring Application With Interrupt Agent Code
-// -------------------------------------------------------
+// Power Efficient Remote Monitoring Application Agent Code
+// ---------------------------------------------------
 
-// CLOUD SERVICE LIBRARY
-// -------------------------------------------------------
+// WEBSERVICE LIBRARY
+// ---------------------------------------------------
 // Libraries must be required before all other code
 
 // Initial State Library
 #require "InitialState.class.nut:1.0.0"
 // Library to manage agent/device communication
 #require "MessageManager.lib.nut:2.2.0"
-#require "JSONEncoder.class.nut:2.0.0"
 
-// REMOTE MONITORING INTERRUPT APPLICATION CODE
-// -------------------------------------------------------
+// REMOTE MONITORING APPLICATION CODE
+// ---------------------------------------------------
 // Application code, listen for readings from device,
 // when a reading is received send the data to Initial
 // State
@@ -41,34 +40,24 @@ class Application {
         // Let's log the agent ID here
         server.log("Agent ID: " + agentID);
 
-        mm.on("data", dataHandler.bindenv(this));
+        mm.on("readings", readingsHandler.bindenv(this));
     }
 
-    function dataHandler(msg, reply) {
-        // Log the data from the device. The data is a
-        // table, so use JSON encodeing method convert to a string
-        // server.log(http.jsonencode(msg.data));
-
+    function readingsHandler(msg, reply) {
         // Initial State requires the data in a specific structre
         // Build an array with the data from our reading.
         local events = [];
 
-        if ("readings" in msg.data) {
-            server.log(http.jsonencode(msg.data.readings));
-            foreach (reading in msg.data.readings) {
-                events.push({"key" : "temperature", "value" : reading.temperature, "epoch" : reading.time});
-                events.push({"key" : "humidity", "value" : reading.humidity, "epoch" : reading.time});
-                events.push({"key" : "accel_x", "value" : reading.accel_x, "epoch" : reading.time});
-                events.push({"key" : "accel_y", "value" : reading.accel_y, "epoch" : reading.time});
-                events.push({"key" : "accel_z", "value" : reading.accel_z, "epoch" : reading.time});
-            }
-        }
+        foreach (reading in msg.data) {
+            // Log the reading from the device. The reading is a
+            // table, so use JSON encodeing method convert to a string
+            server.log(http.jsonencode(reading));
 
-        if ("alerts" in msg.data) {
-            server.log(http.jsonencode(msg.data.alerts));
-            foreach (alert in msg.data.alerts) {
-                events.push({"key" : "alert", "value" : alert.msg, "epoch" : alert.time});
-            }
+            events.push({"key" : "temperature", "value" : reading.temperature, "epoch" : reading.time});
+            events.push({"key" : "humidity", "value" : reading.humidity, "epoch" : reading.time});
+            events.push({"key" : "accel_x", "value" : reading.accel_x, "epoch" : reading.time});
+            events.push({"key" : "accel_y", "value" : reading.accel_y, "epoch" : reading.time});
+            events.push({"key" : "accel_z", "value" : reading.accel_z, "epoch" : reading.time});
         }
 
         // Send reading to Initial State

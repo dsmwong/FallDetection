@@ -1,7 +1,7 @@
 // Remote Monitoring Application With Interrupt Agent Code
 // -------------------------------------------------------
 
-// CLOUD SERVICE LIBRARY
+// WEBSERVICE LIBRARY
 // -------------------------------------------------------
 // Libraries must be required before all other code
 
@@ -9,7 +9,6 @@
 #require "InitialState.class.nut:1.0.0"
 // Library to manage agent/device communication
 #require "MessageManager.lib.nut:2.2.0"
-#require "JSONEncoder.class.nut:2.0.0"
 
 // REMOTE MONITORING INTERRUPT APPLICATION CODE
 // -------------------------------------------------------
@@ -22,7 +21,7 @@ class Application {
     // On Intial State website navigate to "my account"
     // page find/create a "Streaming Access Key"
     // Paste it into the variable below
-    static STREAMING_ACCESS_KEY = "@{STREAM_ACCESS_KEY}"; 
+    static STREAMING_ACCESS_KEY = "";
 
     // Class variables
     iState = null;

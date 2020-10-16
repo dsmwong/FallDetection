@@ -1,4 +1,4 @@
-// Remote Monitoring Application With Interrupt Device Code
+// Power Efficient Remote Monitoring Application Device Code
 // ---------------------------------------------------
 // NOTE: imp004m, and imp006 devices do not have nv storage. 
 // This code will work around this on limitation by using shallow sleep
@@ -6,7 +6,7 @@
 // https://developer.electricimp.com/resources/sleepstatesexplained
 
 // SENSOR LIBRARIES
-// --------------------------------------------------------
+// ---------------------------------------------------
 // Libraries must be required before all other code
 
 // Accelerometer Library
@@ -19,14 +19,16 @@
 #require "MessageManager.lib.nut:2.2.0"
 
 // HARDWARE ABSTRACTION LAYER
-// --------------------------------------------------------
+// ---------------------------------------------------
 // HAL's are tables that map human readable names to
 // the hardware objects used in the application.
 
+// Copy and Paste Your HAL here
+// YOUR_HAL <- {...}
 @include "ExplorerKit_001.HAL.nut"
 
-// REMOTE MONITORING INTERRUPT APPLICATION CODE
-// --------------------------------------------------------
+// POWER EFFICIENT REMOTE MONITORING APPLICATION CODE
+// ---------------------------------------------------
 // Application code, take readings from our sensors
 // and send the data to the agent
 
@@ -37,25 +39,23 @@ class Application {
     // Time in seconds to wait between connections
     static REPORTING_INTERVAL_SEC = 120;
     // Max number of stored readings
-    static MAX_NUM_STORED_READINGS = 20;
-
-    // Max Timer to guard against bug
-    static MAX_TIMER = 60 * 60 * 12
-
+    static MAX_NUM_STORED_READINGS = 23;
     // Time to wait after boot before first disconection
     // This allows time for blinkup recovery on cold boots
     static BOOT_TIMER_SEC = 60;
     // Accelerometer data rate in Hz
-    static ACCEL_DATARATE = 25;
-
-    static FREEFALL_THRESHOLD = 0.7
+    static ACCEL_DATARATE = 1;
+    static ACCEL_SHUTDOWN = 0;
 
     // Hardware variables
+    // i2c             = null; // Replace with your sensori2c
+    // tempHumidAddr   = null; // Replace with your tempHumid i2c addr
+    // accelAddr       = null; // Replace with your accel i2c addr
+
     i2c             = ExplorerKit_001.SENSOR_AND_GROVE_I2C; // Replace with your sensori2c
     tempHumidAddr   = ExplorerKit_001.TEMP_HUMID_I2C_ADDR; // Replace with your tempHumid i2c addr
     accelAddr       = ExplorerKit_001.ACCEL_I2C_ADDR; // Replace with your accel i2c addr
-    wakePin         = ExplorerKit_001.POWER_GATE_AND_WAKE_PIN; // Replace with your wake pin
-
+    
     // Sensor variables
     tempHumid = null;
     accel = null;
@@ -65,7 +65,6 @@ class Application {
 
     // Flag to track first disconnection
     _boot = false;
-    _debug = true;
 
     // Flag to track if imp is trying to connect
     _connecting = false;
@@ -79,7 +78,7 @@ class Application {
         // recommended for imp004m, so don't set for those types of imps.
         local type = imp.info().type;
         if (!(type == "imp004m" || type == "impC001")) {
-            imp.setpowersave(false);
+            imp.setpowersave(true);
         }
 
         // Change default connection policy, so our application
@@ -93,55 +92,34 @@ class Application {
         // to disconnect.
         mm.onAck(readingsAckHandler.bindenv(this));
         // Message Manager allows us to call a function if a message
-        // fails to be delivered. We will use this to recover data
+        // fails to be delivered. We will use this to condense data
         mm.onFail(sendFailHandler.bindenv(this));
-
-        // Initialize sensors
-        initializeSensors();
 
         // Configure different behavior based on the reason the
         // hardware rebooted
         checkWakeReason();
     }
 
-    function printStatus() {
-
-    }
-
-    function debugLog(msg) {
-        if( _debug && server.isconnected()) { 
-            server.log(msg) 
-        };
-        
-    }
-
     function checkWakeReason() {
         // We can configure different behavior based on
         // the reason the hardware rebooted.
-
-        debugLog("Woke up because of Reason: " + hardware.wakereason());
         switch (hardware.wakereason()) {
             case WAKEREASON_TIMER :
                 // We woke up after sleep timer expired.
                 restoreNV(); 
-                debugLog("Timer Wake");
                 break;
             case WAKEREASON_PIN :
                 // We woke up because an interrupt pin was triggered.
                 restoreNV(); 
-                // Let's check our interrupt
-                checkInterrupt();
-                debugLog("Pin Wake");
                 break;
             case WAKEREASON_SNOOZE :
                 // We woke up after connection timeout.
                 restoreNV(); 
-                debugLog("Snooze Wake");
                 break;
             default :
                 // We pushed new code or just rebooted the device, etc. Lets
                 // congigure everything.
-                server.log("Device running... Reason: " + hardware.wakereason());
+                server.log("Device running...");
 
                 // NV can persist data when the device goes into sleep mode
                 // Set up the table with defaults - note this method will
@@ -154,16 +132,15 @@ class Application {
                 // immediately disconnect after boot
                 // Set up first disconnect
                 _boot = true;
-                debugLog("Wake in " + BOOT_TIMER_SEC + " seconds")
                 imp.wakeup(BOOT_TIMER_SEC, function() {
                     _boot = false;
-                    debugLog("Boot Powering down after " + BOOT_TIMER_SEC);
                     powerDown();
                 }.bindenv(this));
         }
 
         // Configure Sensors to take readings
-        configureSensors();
+        initializeSensors();
+        // Start readings loop
         takeReadings();
     }
 
@@ -191,7 +168,57 @@ class Application {
 
                 return("Readings Done");
             }.bindenv(this))
-            .finally(checkConnectionTime.bindenv(this))
+            .finally(function(value) {
+                // Grab a timestamp
+                local now = time();
+
+                // Update the next reading time varaible
+                setNextReadTime(now);
+
+                if (!_connecting) {
+                    // Only send readings if we have some and are either
+                    // already connected or if it is time to connect
+                    if (status.readings.len() > 0 && (server.isconnected() || timeToConnect())) {
+
+                        // Update the next connection time varaible
+                        setNextConnectTime(now);
+
+                        if (server.isconnected()) {
+                            // We connected let's send readings
+                            sendReadings();
+                        } else {
+                            // Toggle connecting flag
+                            _connecting = true;
+
+                            // We changed the default connection policy, so we need to
+                            // use this method to connect
+                            server.connect(function(reason) {
+                                // Connect handler called, we are no longer tring to
+                                // connect, so set connecting flag to false
+                                _connecting = false;
+                                if (reason == SERVER_CONNECTED) {
+                                    // We connected let's send readings
+                                    sendReadings();
+                                } else {
+                                    // We were not able to connect
+                                    // Let's make sure we don't run out
+                                    // of memory with our stored readings
+                                    failHandler();
+                                }
+                            }.bindenv(this));
+                        }
+                    } else {
+                        // Not time to connect, let's sleep until
+                        // next reading time
+                        powerDown();
+                    }
+                } else {
+                    // Calculate how long before next reading time
+                    local timer = status.nextReadTime - now;
+                    // Schedule next reading
+                    imp.wakeup(timer, takeReadings.bindenv(this));
+                }
+            }.bindenv(this))
     }
 
     function takeTempHumidReading() {
@@ -210,80 +237,9 @@ class Application {
         }.bindenv(this))
     }
 
-    function checkConnectionTime(value = null) {
-        // Grab a timestamp
-        local now = time();
-
-        // Update the next reading time varaible
-        setNextReadTime(now);
-
-        // If we are not currently tring to connect, check if we
-        // should connect, send data, or power down
-        if (!_connecting) {
-
-            local connected = server.isconnected();
-            // Send if we are connected or if it is
-            // time to connect
-            if (connected || timeToConnect()) {
-
-                // Update the next connection time varaible
-                setNextConnectTime(now);
-
-                debugLog("Connected=" + connected + " or Time to Connect");
-
-                if (connected) {
-                    sendData();
-                } else {
-                    // Toggle connecting flag
-                    _connecting = true;
-
-                    // We changed the default connection policy, so we need to
-                    // use this method to connect
-                    debugLog("Attempt Connection");
-                    server.connect(function(reason) {
-                        // Connect handler called, we are no longer tring to
-                        // connect, so set connecting flag to false
-                        _connecting = false;
-                        if (reason == SERVER_CONNECTED) {
-                            // We connected let's send readings
-                            sendData();
-                        } else {
-                            // We were not able to connect
-                            // Let's make sure we don't run out
-                            // of memory with our stored readings
-                            failHandler();
-                        }
-                    }.bindenv(this));
-                }
-            } else {
-                // Not time to connect & we are not currently
-                // trying to send data, so let's sleep until
-                // next reading time
-                debugLog("Not connected -  Power Down");
-                powerDown();
-            }
-        } else {
-            // Calculate how long before next reading time
-            local timer = status.nextReadTime - now;
-            // Schedule next reading
-            debugLog("Wake me in " + timer);
-            imp.wakeup(timer, takeReadings.bindenv(this));
-        }
-
-    }
-
-    function sendData() {
-        local data = {};
-
-        if (status.readings.len() > 0) {
-            data.readings <- status.readings;
-        }
-        if (status.alerts.len() > 0) {
-            data.alerts <- status.alerts;
-        }
-
-        // Send data to the agent
-        mm.send("data", data);
+    function sendReadings() {
+        // Send readings to the agent
+        mm.send("readings", status.readings);
 
         // If this message is acknowleged by the agent
         // the readingsAckHandler will be triggered
@@ -294,25 +250,20 @@ class Application {
 
     function readingsAckHandler(msg) {
         // We connected successfully & sent data
-
         // Clear readings we just sent
         status.readings.clear();
-
-        // Clear alerts we just sent
-        status.alerts.clear();
 
         // Reset numFailedConnects
         status.numFailedConnects <- 0;
 
         // Disconnect from server
-        debugLog("Reading Ack - Power Down");
         powerDown();
     }
 
     function sendFailHandler(msg, error, retry) {
-        // Message did not send, call the connection
-        // failed handler, so readings can be
-        // condensed and stored
+        // Readings did not send, call the
+        // connection failed handler, so readings
+        // can be condensed and re-stored
         failHandler();
     }
 
@@ -331,20 +282,14 @@ class Application {
         local timer = status.nextReadTime - time();
         local type = imp.info().type;
 
-        // if( timer > MAX_TIMER ) { timer = READING_INTERVAL_SEC };
-
-        debugLog("Power down _boot=" + _boot + " timer=" + timer);
-
         // Check that we did not just boot up, are
         // not about to take a reading, and have an 'nv' table
         if (!_boot && timer > 2) {
-            if (!(type == "imp004m" || type == "imp006") && timer < MAX_TIMER ) { // We have nv, so deep sleep
+            if (!(type == "imp004m" || type == "imp006")) { // We have nv, so deep sleep
                 imp.onidle(function() {
-                    debugLog("[" + type + "] idle sleep " + timer);
                     server.sleepfor(timer);
                 }.bindenv(this));
             } else { // No nv table, so just disconnect and sleep
-                debugLog("No NV table " + timer);
                 setWakeup(timer);
                 imp.onidle(function() {
                     server.disconnect();
@@ -352,22 +297,20 @@ class Application {
             }
        } else {
             // Schedule next reading, but don't go to sleep
-            debugLog("Schedule next wake for " + timer);
-            if( timer > MAX_TIMER ) { 
-                timer = READING_INTERVAL_SEC 
-                debugLog("Resetting next wake for " + timer)
-            }
             setWakeup(timer);
         }
     }
 
-
     function powerDownSensors() {
         tempHumid.setMode(HTS221_MODE.POWER_DOWN);
+        accel.setDataRate(ACCEL_SHUTDOWN);
+        accel.enable(false);
     }
 
     function powerUpSensors() {
         tempHumid.setMode(HTS221_MODE.ONE_SHOT);
+        accel.setDataRate(ACCEL_DATARATE);
+        accel.enable(true);
     }
 
     function failHandler() {
@@ -385,40 +328,37 @@ class Application {
         // Clear stored readings
         status.readings.clear();
 
-        if (readings.len() > 0) {
-            // Create an array to store condensed readings
-            local condensed = [];
+        // Create an array to store condensed readings
+        local condensed = [];
 
-            // If we have already averaged readings move them
-            // into the condensed readings array
-            for (local i = 0; i < failed; i++) {
-                condensed.push( readings.remove(i) );
-            }
-
-            // Condense and add the new readings
-            condensed.push(getAverage(readings));
-
-            // Drop old readings if we are running out of space
-            while (condensed.len() >= MAX_NUM_STORED_READINGS) {
-                condensed.remove(0);
-            }
-
-            // If new readings have come in while we were processing
-            // Add those to the condensed readings
-            if (status.readings.len() > 0) {
-                foreach(item in status.readings) {
-                    condensed.push(item);
-                }
-            }
-
-            // Replace the stored readings with the condensed readings
-            status.readings <- condensed;
+        // If we have already averaged readings move them
+        // into the condensed readings array
+        for (local i = 0; i < failed; i++) {
+            condensed.push( readings.remove(i) );
         }
+
+        // Condense and add the new readings
+        condensed.push(getAverage(readings));
+
+        // Drop old readings if we are running out of space
+        while (condensed.len() >= MAX_NUM_STORED_READINGS) {
+            condensed.remove(0);
+        }
+
+        // If new readings have come in while we were processing
+        // Add those to the condensed readings
+        if (status.readings.len() > 0) {
+            foreach(item in status.readings) {
+                condensed.push(item);
+            }
+        }
+
+        // Replace the stored readings with the condensed readings
+        status.readings <- condensed;
 
         // Update the number of failed connections
         status.numFailedConnects <- failed++;
-        
-        debugLog("Fail handle - Power Down");
+
         powerDown();
     }
 
@@ -471,7 +411,6 @@ class Application {
         setNextConnectTime(now);
         setNextReadTime(now);
         status.readings <- [];
-        status.alerts <-[];
         status.numFailedConnects <- 0;
     }
 
@@ -483,7 +422,7 @@ class Application {
     }
 
     function setNextConnectTime(now) {
-        status.nextConnectTime <- now + REPORTING_INTERVAL_SEC;
+        status.nextConectTime <- now + REPORTING_INTERVAL_SEC;
     }
 
     function setNextReadTime(now) {
@@ -492,32 +431,8 @@ class Application {
 
     function timeToConnect() {
         // return a boolean - if it is time to connect based on
-        // the current time or alerts
-        return (time() >= status.nextConnectTime || status.alerts.len() > 0);
-    }
-
-    function configureInterrupt() {
-        accel.configureInterruptLatching(true);
-        // exceed 1.5G for 1/5 of a second
-        accel.configureFreeFallInterrupt(true, FREEFALL_THRESHOLD);
-
-        // Configure wake pin
-        wakePin.configure(DIGITAL_IN_WAKEUP, function() {
-            debugLog("Woke Up by pin");
-            if (wakePin.read() && checkInterrupt()) {
-                debugLog("Power Up and Read");
-                powerUpSensors();
-                takeReadings();
-            }
-        }.bindenv(this));
-    }
-
-    function checkInterrupt() {
-        local interrupt = accel.getInterruptTable();
-        if (interrupt.int1) {
-            status.alerts.push({"msg" : "Freefall Detected", "time": time()});
-        }
-        return interrupt.int1;
+        // the current time
+        return (time() >= status.nextConectTime);
     }
 
     function initializeSensors() {
@@ -527,17 +442,13 @@ class Application {
         // Initialize sensors
         tempHumid = HTS221(i2c, tempHumidAddr);
         accel = LIS3DH(i2c, accelAddr);
-    }
 
-    function configureSensors() {
         // Configure sensors to take readings
         tempHumid.setMode(HTS221_MODE.ONE_SHOT);
         accel.reset();
         accel.setMode(LIS3DH_MODE_LOW_POWER);
         accel.setDataRate(ACCEL_DATARATE);
         accel.enable(true);
-        // Configure accelerometer freefall interrupt
-        configureInterrupt();
     }
 }
 
