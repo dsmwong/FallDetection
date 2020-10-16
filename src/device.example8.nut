@@ -230,6 +230,7 @@ class Application {
                 setNextConnectTime(now);
 
                 debugLog("Connected=" + connected + " or Time to Connect");
+                debugLog(parseStatus(status));
 
                 if (connected) {
                     sendData();
@@ -323,17 +324,32 @@ class Application {
         }.bindenv(this))
     }
 
+    function parseDate(date) {
+        return format("%04d-%02d-%02d %02d:%02d:%02dZ", date.year, date.month, date.day, date.hour, date.min, date.sec);;
+    }
+
+    function parseStatus(status) {
+        local now = time();
+        return format("[%s] NRT|%s,NCT|%s,RL|%d,AL|%d,FC|%d", 
+                        parseDate(date(now)), 
+                        parseDate(date(status.nextReadTime)), 
+                        parseDate(date(status.nextConnectTime)), 
+                        status.readings.len(), 
+                        status.alerts.len(), 
+                        status.numFailedConnects);
+    }
+
     function powerDown() {
         // Power Down sensors
         powerDownSensors();
 
         // Calculate how long before next reading time
-        local timer = status.nextReadTime - time();
+        local now = time();
+        debugLog(parseStatus(status));
+        local timer = status.nextReadTime - now;
         local type = imp.info().type;
 
-        // if( timer > MAX_TIMER ) { timer = READING_INTERVAL_SEC };
-
-        debugLog("Power down _boot=" + _boot + " timer=" + timer);
+        debugLog("[" + parseDate(date(now)) + "] Power down _boot=" + _boot + " timer=" + timer);
 
         // Check that we did not just boot up, are
         // not about to take a reading, and have an 'nv' table
