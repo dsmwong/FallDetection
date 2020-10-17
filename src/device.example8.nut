@@ -154,10 +154,10 @@ class Application {
                 // immediately disconnect after boot
                 // Set up first disconnect
                 _boot = true;
-                debugLog("Wake in " + BOOT_TIMER_SEC + " seconds")
+                debugLog("Wake in " + BOOT_TIMER_SEC + " seconds after boot timer expires")
                 imp.wakeup(BOOT_TIMER_SEC, function() {
                     _boot = false;
-                    debugLog("Boot Powering down after " + BOOT_TIMER_SEC);
+                    debugLog("Boot timer expired, powering down after " + BOOT_TIMER_SEC);
                     powerDown();
                 }.bindenv(this));
         }
@@ -267,7 +267,7 @@ class Application {
             // Calculate how long before next reading time
             local timer = status.nextReadTime - now;
             // Schedule next reading
-            debugLog("Wake me in " + timer);
+            debugLog("Wake me in " + timer + " as device is conecting");
             imp.wakeup(timer, takeReadings.bindenv(this));
         }
 
@@ -360,7 +360,7 @@ class Application {
                     server.sleepfor(timer);
                 }.bindenv(this));
             } else { // No nv table, so just disconnect and sleep
-                debugLog("No NV table " + timer);
+                debugLog("No NV table or corrupt NV " + timer);
                 setWakeup(timer);
                 imp.onidle(function() {
                     server.disconnect();
@@ -368,7 +368,7 @@ class Application {
             }
        } else {
             // Schedule next reading, but don't go to sleep
-            debugLog("Schedule next wake for " + timer + "_boot=" + _boot);
+            debugLog("Schedule next wake for " + timer + " _boot=" + _boot);
             if( timer > MAX_TIMER ) { 
                 timer = READING_INTERVAL_SEC 
                 debugLog("Resetting next wake for " + timer)
