@@ -368,12 +368,12 @@ class Application {
             }
        } else {
             // Schedule next reading, but don't go to sleep
-            debugLog("Schedule next wake for " + timer);
+            debugLog("Schedule next wake for " + timer + "_boot=" + _boot);
             if( timer > MAX_TIMER ) { 
                 timer = READING_INTERVAL_SEC 
                 debugLog("Resetting next wake for " + timer)
             }
-            setWakeup(timer);
+            if(_boot) { setWakeup(timer); }
         }
     }
 
